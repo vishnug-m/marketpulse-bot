@@ -10,7 +10,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
 });
 
 const parser = new Parser();
-const users = new Map(); // store user keywords
+const users = new Map();
 
 // -------- START --------
 bot.onText(/\/start/, (msg) => {
@@ -50,6 +50,15 @@ const clean = (text) => {
     .trim();
 };
 
+// -------- DATE --------
+const formatDate = (date) => {
+  if (!date) return "";
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+  });
+};
+
 // -------- FETCH --------
 async function fetchNewsByKeywords(keywords) {
   try {
@@ -73,6 +82,7 @@ const formatNews = (items) => {
 
   items.forEach((item) => {
     msg += `\n🔹 ${clean(item.title)}\n`;
+    msg += `   📅 ${formatDate(item.pubDate)}\n`;
   });
 
   return msg;
