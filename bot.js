@@ -194,8 +194,6 @@ setInterval(async () => {
 
 // -------- KEEP ALIVE --------
 
-import http from "http";
-
 const PORT = process.env.PORT || 3000;
 const URL = process.env.RENDER_EXTERNAL_URL;
 
