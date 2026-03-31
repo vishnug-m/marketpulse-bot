@@ -194,13 +194,21 @@ setInterval(async () => {
 
 // -------- KEEP ALIVE --------
 
+import http from "http";
+
 const PORT = process.env.PORT || 3000;
 const URL = process.env.RENDER_EXTERNAL_URL;
 
-bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`);
+// Set webhook once
+bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`)
+  .then(() => console.log("Webhook set"))
+  .catch(err => console.log("Webhook error:", err));
 
 http.createServer((req, res) => {
-  if (req.url === `/bot${process.env.TELEGRAM_BOT_TOKEN}`) {
+  if (
+    req.method === "POST" &&
+    req.url === `/bot${process.env.TELEGRAM_BOT_TOKEN}`
+  ) {
     let body = "";
 
     req.on("data", chunk => {
@@ -211,11 +219,14 @@ http.createServer((req, res) => {
       try {
         const update = JSON.parse(body);
         bot.processUpdate(update);
-      } catch (e) {}
-
+      } catch (e) {
+        console.log("Update error:", e);
+      }
       res.end("ok");
     });
   } else {
     res.end("running");
   }
-}).listen(PORT);
+}).listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
