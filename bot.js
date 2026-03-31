@@ -10,47 +10,41 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
 });
 
 const parser = new Parser();
-const users = new Map();
+const users = new Set();
 
 // -------- START --------
 bot.onText(/\/start/, (msg) => {
+  users.add(msg.chat.id);
   bot.sendMessage(
     msg.chat.id,
     `📊 MarketPulse
 
-Commands:
-/set keyword1, keyword2
-/news → get news based on your keywords`
+/news → Normal brief  
+/search <keyword> → Custom news (example: /search oil india)`
   );
 });
 
-// -------- SET KEYWORDS --------
-bot.onText(/\/set (.+)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const keywords = match[1]
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean);
+// -------- TRUSTED --------
+const TRUSTED = [
+  "reuters","bbc","ndtv","economictimes","indiatoday",
+  "thehindu","livemint","onmanorama","mathrubhumi",
+  "hindustantimes"
+];
 
-  users.set(chatId, keywords);
-
-  bot.sendMessage(
-    chatId,
-    `✅ Keywords set:\n${keywords.join(", ")}`
-  );
-});
-
-// -------- CLEAN --------
-const clean = (text) => {
-  if (!text) return "";
-  return text
+// -------- HELPERS --------
+const clean = (text) =>
+  (text || "")
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
+    .replace(/\|.*$/g, "")
     .trim();
+
+const isTrusted = (item) => {
+  const url = item.link || "";
+  return TRUSTED.some((s) => url.includes(s));
 };
 
-// -------- DATE --------
 const formatDate = (date) => {
   if (!date) return "";
   return new Date(date).toLocaleDateString("en-IN", {
@@ -59,57 +53,146 @@ const formatDate = (date) => {
   });
 };
 
-// -------- FETCH --------
-async function fetchNewsByKeywords(keywords) {
-  try {
-    const query = keywords.join(" ");
-    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
-      query
-    )}&hl=en-IN&gl=IN&ceid=IN:en`;
+const getContent = (item) => {
+  let text = clean(item.contentSnippet || item.title);
+  return text.substring(0, 200) + "...";
+};
 
-    const feed = await parser.parseURL(url);
-    return feed.items.slice(0, 8);
-  } catch {
-    return [];
-  }
-}
+// -------- SMART IMPACT --------
+const getImpact = (text) => {
+  const t = text.toLowerCase();
+
+  if (t.includes("oil")) return "📉 Oil → Inflation ↑";
+  if (t.includes("rbi")) return "🏦 RBI → Rate impact";
+  if (t.includes("inflation")) return "📊 Inflation risk";
+  if (t.includes("fii") || t.includes("us")) return "💰 Capital flows impact";
+  if (t.includes("budget") || t.includes("tax")) return "🏛 Policy shift";
+
+  return null;
+};
+
+const getSource = (item) => {
+  const url = item.link || "";
+
+  if (url.includes("reuters")) return "Reuters";
+  if (url.includes("bbc")) return "BBC";
+  if (url.includes("ndtv")) return "NDTV";
+  if (url.includes("economictimes")) return "ET";
+  if (url.includes("thehindu")) return "The Hindu";
+  if (url.includes("livemint")) return "Mint";
+
+  return "News";
+};
 
 // -------- FORMAT --------
-const formatNews = (items) => {
-  if (items.length === 0) return "⚠️ No news found";
+const formatSection = (title, items) => {
+  if (items.length === 0) return "";
 
-  let msg = `📊 *Custom News Brief*\n`;
+  let msg = `\n━━━ ${title} ━━━\n`;
 
-  items.forEach((item) => {
-    msg += `\n🔹 ${clean(item.title)}\n`;
-    msg += `   📅 ${formatDate(item.pubDate)}\n`;
+  items.slice(0, 5).forEach((item) => {
+    const text = item.title + " " + (item.contentSnippet || "");
+    const impact = getImpact(text);
+
+    msg += `\n🔹 ${getContent(item)}\n`;
+
+    if (impact) {
+      msg += `   ${impact}\n`;
+    }
+
+    msg += `   📰 ${getSource(item)} | 📅 ${formatDate(item.pubDate)}\n`;
   });
 
   return msg;
 };
 
-// -------- NEWS --------
-bot.onText(/\/news/, async (msg) => {
-  const chatId = msg.chat.id;
-
-  const keywords = users.get(chatId);
-
-  if (!keywords || keywords.length === 0) {
-    bot.sendMessage(
-      chatId,
-      "⚠️ Set keywords first using:\n/set india, oil, china"
+// -------- FETCH NORMAL --------
+async function fetchNews() {
+  try {
+    const feed = await parser.parseURL(
+      "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
     );
+
+    const filtered = feed.items.filter(isTrusted);
+    return filtered.length ? filtered : feed.items.slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+// -------- FETCH BY KEYWORD --------
+async function fetchByKeyword(query) {
+  try {
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
+      query
+    )}&hl=en-IN&gl=IN&ceid=IN:en`;
+
+    const feed = await parser.parseURL(url);
+
+    const filtered = feed.items.filter(isTrusted);
+    return filtered.length ? filtered : feed.items.slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+// -------- NORMAL MODE --------
+bot.onText(/\/news/, async (msg) => {
+  bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
+
+  const items = await fetchNews();
+  if (items.length === 0) {
+    bot.sendMessage(msg.chat.id, "⚠️ News unavailable");
     return;
   }
 
-  bot.sendMessage(chatId, "🔍 Fetching news...");
+  const geo = items.slice(0, 3);
+  const india = items.slice(3, 6);
+  const market = items.slice(6, 9);
 
-  const items = await fetchNewsByKeywords(keywords);
+  let message = `📊 *Market Intelligence Brief*\n`;
 
-  const message = formatNews(items);
+  message += formatSection("🌍 GLOBAL", geo);
+  message += formatSection("🇮🇳 INDIA", india);
+  message += formatSection("📈 MARKETS", market);
 
-  bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+  bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
 });
+
+// -------- KEYWORD MODE --------
+bot.onText(/\/search (.+)/, async (msg, match) => {
+  const query = match[1];
+
+  bot.sendMessage(msg.chat.id, `🔎 Searching: ${query}`);
+
+  const items = await fetchByKeyword(query);
+
+  if (items.length === 0) {
+    bot.sendMessage(msg.chat.id, "No results found");
+    return;
+  }
+
+  let message = `🔎 *Results for:* ${query}\n`;
+
+  message += formatSection("📰 NEWS", items);
+
+  bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
+});
+
+// -------- AUTO --------
+setInterval(async () => {
+  const now = new Date();
+  if (now.getHours() === 8 && now.getMinutes() === 0) {
+    const items = await fetchNews();
+
+    let message = `📊 *Morning Brief*\n`;
+    message += formatSection("TOP NEWS", items);
+
+    users.forEach((chatId) => {
+      bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    });
+  }
+}, 60000);
 
 // -------- KEEP ALIVE --------
 const PORT = process.env.PORT || 3000;
