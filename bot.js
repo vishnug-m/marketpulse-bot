@@ -193,11 +193,7 @@ setInterval(async () => {
 }, 60000);
 
 // -------- KEEP ALIVE --------
-const PORT = process.env.PORT || 3000;
 
-http.createServer((req, res) => {
-  res.end("Alive");
-}).listen(PORT);
 const PORT = process.env.PORT || 3000;
 const URL = process.env.RENDER_EXTERNAL_URL;
 
