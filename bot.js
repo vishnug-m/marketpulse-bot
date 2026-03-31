@@ -5,9 +5,7 @@ import http from "http";
 
 dotenv.config();
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
-  polling: true,
-});
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
 
 const parser = new Parser();
 const users = new Set();
@@ -199,4 +197,29 @@ const PORT = process.env.PORT || 3000;
 
 http.createServer((req, res) => {
   res.end("Alive");
+}).listen(PORT);
+const PORT = process.env.PORT || 3000;
+const URL = process.env.RENDER_EXTERNAL_URL;
+
+bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`);
+
+http.createServer((req, res) => {
+  if (req.url === `/bot${process.env.TELEGRAM_BOT_TOKEN}`) {
+    let body = "";
+
+    req.on("data", chunk => {
+      body += chunk;
+    });
+
+    req.on("end", () => {
+      try {
+        const update = JSON.parse(body);
+        bot.processUpdate(update);
+      } catch (e) {}
+
+      res.end("ok");
+    });
+  } else {
+    res.end("running");
+  }
 }).listen(PORT);
