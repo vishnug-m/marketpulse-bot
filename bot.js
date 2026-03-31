@@ -1,6 +1,7 @@
 import TelegramBot from "node-telegram-bot-api";
 import dotenv from "dotenv";
 import Parser from "rss-parser";
+import http from "http";
 
 dotenv.config();
 
@@ -9,22 +10,16 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
 });
 
 const parser = new Parser();
-
-// -------- STORE USERS --------
 const users = new Set();
 
 // -------- START --------
 bot.onText(/\/start/, (msg) => {
   users.add(msg.chat.id);
-
   bot.sendMessage(
     msg.chat.id,
     `📊 MarketPulse
 
-Auto brief: 8 AM
-
-/news → Full brief
-/ent → Entertainment`
+/news → Full brief`
   );
 });
 
@@ -32,23 +27,20 @@ Auto brief: 8 AM
 const TRUSTED = [
   "reuters","bbc","ndtv","economictimes","indiatoday",
   "thehindu","livemint","onmanorama","mathrubhumi",
-  "filmibeat","pinkvilla","hindustantimes"
+  "hindustantimes"
 ];
 
-// -------- CLEAN TEXT (FIX MAIN ISSUE) --------
+// -------- CLEAN --------
 const clean = (text) => {
   if (!text) return "";
-
   return text
-    .replace(/<[^>]*>/g, "")           // remove HTML
-    .replace(/&nbsp;/g, " ")           // remove nbsp
-    .replace(/&amp;/g, "&")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/\|.*$/g, "")             // remove trailing sources after |
+    .replace(/\|.*$/g, "")
     .trim();
 };
 
-// -------- HELPERS --------
 const isTrusted = (item) => {
   const url = item.link || "";
   return TRUSTED.some((s) => url.includes(s));
@@ -62,30 +54,37 @@ const formatDate = (date) => {
   });
 };
 
-// -------- LONG CONTENT --------
+// -------- CONTENT --------
 const getContent = (item) => {
-  let text =
-    item.contentSnippet ||
-    item.content ||
-    item.title;
-
-  text = clean(text);
-
-  return text.substring(0, 220) + "...";
+  let text = clean(item.contentSnippet || item.title);
+  return text.substring(0, 200) + "...";
 };
 
-// -------- INSIGHT --------
-const insight = (text) => {
+// -------- SMART IMPACT (ONLY WHEN RELEVANT) --------
+const getImpact = (text) => {
   const t = text.toLowerCase();
 
-  if (t.includes("oil")) return "📉 Inflation risk ↑";
-  if (t.includes("china")) return "📈 India opportunity ↑";
-  if (t.includes("us")) return "💰 FII flow impact";
-  if (t.includes("war")) return "⚠️ Volatility ↑";
-  if (t.includes("bjp") || t.includes("modi"))
-    return "🏛 Policy → Sector impact";
+  // HIGH relevance
+  if (t.includes("oil") || t.includes("crude"))
+    return "📉 Oil → Inflation ↑ → Market pressure";
 
-  return "🔎 Monitor";
+  if (t.includes("rbi") || t.includes("interest rate"))
+    return "🏦 Rates → Banking & liquidity impact";
+
+  if (t.includes("inflation"))
+    return "📊 Inflation → Policy tightening risk";
+
+  if (t.includes("us fed") || t.includes("fii"))
+    return "💰 Global flows → Market movement";
+
+  if (t.includes("china") && t.includes("economy"))
+    return "📈 China slowdown → India opportunity";
+
+  if (t.includes("budget") || t.includes("tax"))
+    return "🏛 Fiscal policy → Sector shifts";
+
+  // NOT relevant → return null
+  return null;
 };
 
 // -------- SOURCE --------
@@ -98,26 +97,28 @@ const getSource = (item) => {
   if (url.includes("economictimes")) return "ET";
   if (url.includes("thehindu")) return "The Hindu";
   if (url.includes("livemint")) return "Mint";
-  if (url.includes("onmanorama")) return "Manorama";
-  if (url.includes("mathrubhumi")) return "Mathrubhumi";
-  if (url.includes("filmibeat")) return "Filmibeat";
-  if (url.includes("pinkvilla")) return "Pinkvilla";
-  if (url.includes("hindustantimes")) return "HT";
 
   return "News";
 };
 
-// -------- FORMAT (FIX SPACING) --------
+// -------- FORMAT --------
 const formatSection = (title, items) => {
   if (items.length === 0) return "";
 
   let msg = `\n━━━ ${title} ━━━\n`;
 
   items.slice(0, 3).forEach((item) => {
-    const text = item.title + " " + (item.contentSnippet || "");
+    const fullText = item.title + " " + (item.contentSnippet || "");
+
+    const impact = getImpact(fullText);
 
     msg += `\n🔹 ${getContent(item)}\n`;
-    msg += `   ${insight(text)}\n`;
+
+    // ONLY show impact if relevant
+    if (impact) {
+      msg += `   ${impact}\n`;
+    }
+
     msg += `   📰 ${getSource(item)} | 📅 ${formatDate(item.pubDate)}\n`;
   });
 
@@ -125,7 +126,7 @@ const formatSection = (title, items) => {
 };
 
 // -------- FETCH --------
-async function fetchMainNews() {
+async function fetchNews() {
   try {
     const feed = await parser.parseURL(
       "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
@@ -138,23 +139,9 @@ async function fetchMainNews() {
   }
 }
 
-async function fetchEntertainment() {
-  try {
-    const feed = await parser.parseURL(
-      "https://news.google.com/rss/search?q=mohanlal+mammootty+vijay&hl=en-IN&gl=IN&ceid=IN:en"
-    );
-
-    return feed.items.filter(isTrusted).slice(0, 6);
-  } catch {
-    return [];
-  }
-}
-
 // -------- BUILD --------
 async function buildMessage() {
-  const items = await fetchMainNews();
-  const ent = await fetchEntertainment();
-
+  const items = await fetchNews();
   if (items.length === 0) return "⚠️ News unavailable";
 
   const geo = items.slice(0, 3);
@@ -167,24 +154,14 @@ async function buildMessage() {
   message += formatSection("🇮🇳 INDIA", india);
   message += formatSection("📈 MARKETS", market);
 
-  if (ent.length > 0) {
-    message += formatSection("🎬 ENTERTAINMENT", ent);
-  }
-
   return message;
 }
 
-// -------- COMMANDS --------
+// -------- COMMAND --------
 bot.onText(/\/news/, async (msg) => {
   bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
   const message = await buildMessage();
   bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/ent/, async (msg) => {
-  const ent = await fetchEntertainment();
-  const message = formatSection("🎬 ENTERTAINMENT", ent);
-  bot.sendMessage(msg.chat.id, message || "No entertainment news");
 });
 
 // -------- AUTO --------
@@ -198,18 +175,9 @@ setInterval(async () => {
   }
 }, 60000);
 
-// -------- DEFAULT --------
-bot.on("message", (msg) => {
-  if (msg.text.startsWith("/")) return;
-  bot.sendMessage(msg.chat.id, "Use /news or /ent");
-});
-import http from "http";
-
+// -------- KEEP ALIVE --------
 const PORT = process.env.PORT || 3000;
 
 http.createServer((req, res) => {
-  res.write("Bot is alive");
-  res.end();
-}).listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  res.end("Alive");
+}).listen(PORT);
