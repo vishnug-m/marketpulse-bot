@@ -203,3 +203,13 @@ bot.on("message", (msg) => {
   if (msg.text.startsWith("/")) return;
   bot.sendMessage(msg.chat.id, "Use /news or /ent");
 });
+import http from "http";
+
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+  res.write("Bot is alive");
+  res.end();
+}).listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
