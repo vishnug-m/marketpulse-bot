@@ -22,27 +22,23 @@ const clean = (text) =>
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/[_*[\]()~`>#+=|{}.!-]/g, "") // prevent telegram error
+    .replace(/[_*[\]()~`>#+=|{}.!-]/g, "")
     .trim();
 
 // -------- FILTER --------
 const isSeriousNews = (text) => {
   const t = text.toLowerCase();
-
-  if (
+  return !(
     t.includes("rape") ||
     t.includes("murder") ||
     t.includes("suicide") ||
     t.includes("assault")
-  ) return false;
-
-  return true;
+  );
 };
 
 // -------- MARKET RELEVANCE --------
 const isMarketRelevant = (text) => {
   const t = text.toLowerCase();
-
   return (
     t.includes("oil") ||
     t.includes("crude") ||
@@ -63,31 +59,35 @@ const formatDate = (date) => {
   });
 };
 
-// -------- CONTENT --------
+// -------- 🔥 REAL CONTENT FIX --------
 const getContent = (item) => {
-  let content = clean(item.contentSnippet || "");
+  let raw = item.content || item.contentSnippet || "";
 
-  // Split into sentences
-  let sentences = content.split(/\.|\u2026|\…/);
+  // Clean HTML
+  raw = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
-  // Remove very short / junk sentences
-  sentences = sentences.filter(s => s.trim().length > 40);
-
-  // Remove sentences that are too similar to title
   const title = clean(item.title || "").toLowerCase();
 
-  sentences = sentences.filter(s => {
-    const sLower = s.toLowerCase();
-    return !sLower.includes(title.substring(0, 50));
+  // Break into chunks
+  let parts = raw.split(/(?=[A-Z][a-z]+\s[A-Z])/);
+
+  let cleaned = parts.filter(p => {
+    const t = p.toLowerCase().trim();
+
+    return (
+      t.length > 40 &&
+      !t.includes(title.substring(0, 40)) &&
+      !t.includes("read more") &&
+      !t.includes("live updates")
+    );
   });
 
   // Remove duplicates
-  const unique = [...new Set(sentences.map(s => s.trim()))];
+  cleaned = [...new Set(cleaned)];
 
-  // Take first 2 meaningful sentences
-  const finalText = unique.slice(0, 2).join(". ");
+  const finalText = cleaned.slice(0, 2).join(". ").trim();
 
-  return finalText ? finalText + "." : clean(item.title);
+  return finalText || "";
 };
 
 // -------- FORMAT --------
@@ -97,8 +97,14 @@ const formatSection = (title, items) => {
   let msg = `\n━━━ ${title} ━━━\n`;
 
   items.slice(0, 3).forEach((item) => {
+    const content = getContent(item);
+
     msg += `\n🔹 ${clean(item.title)}\n`;
-    msg += `   ${getContent(item)}\n`;
+
+    if (content) {
+      msg += `   ${content}\n`;
+    }
+
     msg += `   📰 ${formatDate(item.pubDate)}\n`;
   });
 
@@ -114,7 +120,7 @@ async function fetchNews() {
 
     console.log("Fetched:", feed.items.length);
 
-    return feed.items.slice(0, 12);
+    return feed.items.slice(0, 15);
   } catch (err) {
     console.log("Fetch error:", err);
     return [];
