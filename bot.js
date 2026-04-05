@@ -7,7 +7,7 @@ dotenv.config();
 
 // -------- BOT --------
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
-const parser = new Parser();
+const parser = new Parser({ timeout: 10000 });
 const users = new Set();
 
 // -------- START --------
@@ -46,7 +46,6 @@ const isTrusted = (item) => {
 
 const isSeriousNews = (text) => {
   const t = text.toLowerCase();
-
   if (
     t.includes("rape") ||
     t.includes("murder") ||
@@ -54,7 +53,6 @@ const isSeriousNews = (text) => {
     t.includes("assault") ||
     t.includes("crime")
   ) return false;
-
   return true;
 };
 
@@ -67,19 +65,16 @@ const formatDate = (date) => {
   });
 };
 
-// -------- FULL CONTENT --------
+// -------- CONTENT --------
 const getContent = (item) => {
   let text = clean(item.contentSnippet || item.content || item.title);
-
   text = text.replace(item.title, "").trim();
-
   return text.length > 50 ? text : clean(item.title);
 };
 
 // -------- MARKET RELEVANCE --------
 const isMarketRelevant = (text) => {
   const t = text.toLowerCase();
-
   return (
     t.includes("oil") ||
     t.includes("crude") ||
@@ -97,42 +92,49 @@ const isMarketRelevant = (text) => {
 // -------- SOURCE --------
 const getSource = (item) => {
   const url = item.link || "";
-
   if (url.includes("reuters")) return "Reuters";
   if (url.includes("bbc")) return "BBC";
   if (url.includes("ndtv")) return "NDTV";
   if (url.includes("economictimes")) return "ET";
   if (url.includes("thehindu")) return "The Hindu";
   if (url.includes("livemint")) return "Mint";
-
   return "News";
 };
 
 // -------- FORMAT --------
 const formatSection = (title, items) => {
   if (items.length === 0) return "";
-
   let msg = `\n━━━ ${title} ━━━\n`;
-
   items.slice(0, 4).forEach((item) => {
     msg += `\n🔹 ${clean(item.title)}\n`;
     msg += `   ${getContent(item)}\n`;
     msg += `   📰 ${getSource(item)} | 📅 ${formatDate(item.pubDate)}\n`;
   });
-
   return msg;
 };
 
-// -------- FETCH --------
+// -------- FETCH (PRIMARY + FALLBACK) --------
 async function fetchNews() {
   try {
     const feed = await parser.parseURL(
       "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
     );
 
+    if (!feed.items || feed.items.length === 0) {
+      console.log("No items from RSS");
+      return [];
+    }
+
+    console.log("Fetched:", feed.items.length);
+
+    // fallback if trusted filter too strict
     const filtered = feed.items.filter(isTrusted);
+    console.log("Filtered:", filtered.length);
+
     return filtered.length ? filtered : feed.items.slice(0, 12);
-  } catch {
+
+  } catch (err) {
+    console.log("Fetch error:", err);
     return [];
   }
 }
@@ -145,74 +147,87 @@ async function fetchByKeyword(query) {
     )}&hl=en-IN&gl=IN&ceid=IN:en`;
 
     const feed = await parser.parseURL(url);
-    const filtered = feed.items.filter(isTrusted);
 
+    if (!feed.items || feed.items.length === 0) return [];
+
+    const filtered = feed.items.filter(isTrusted);
     return filtered.length ? filtered : feed.items.slice(0, 10);
-  } catch {
+
+  } catch (err) {
+    console.log("Search error:", err);
     return [];
   }
 }
 
 // -------- MAIN NEWS --------
 bot.onText(/\/news/, async (msg) => {
-  bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
+  try {
+    bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
 
-  const items = await fetchNews();
+    const items = await fetchNews();
 
-  if (items.length === 0) {
-    bot.sendMessage(msg.chat.id, "⚠️ News unavailable");
-    return;
-  }
-
-  let global = [];
-  let india = [];
-  let market = [];
-
-  items.forEach((item) => {
-    const text = (item.title + " " + item.contentSnippet).toLowerCase();
-
-    if (!isSeriousNews(text)) return;
-
-    if (isMarketRelevant(text)) {
-      market.push(item);
-    } else if (
-      text.includes("india") ||
-      text.includes("bjp") ||
-      text.includes("modi")
-    ) {
-      india.push(item);
-    } else {
-      global.push(item);
+    if (!items || items.length === 0) {
+      bot.sendMessage(msg.chat.id, "⚠️ Unable to fetch news. Try again.");
+      return;
     }
-  });
 
-  let message = `📊 *Market Intelligence Brief*\n`;
+    let global = [];
+    let india = [];
+    let market = [];
 
-  message += formatSection("🌍 GLOBAL", global);
-  message += formatSection("🇮🇳 INDIA", india);
-  message += formatSection("📈 MARKET-RELEVANT", market);
+    items.forEach((item) => {
+      const text = (item.title + " " + item.contentSnippet).toLowerCase();
 
-  bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
+      if (!isSeriousNews(text)) return;
+
+      if (isMarketRelevant(text)) {
+        market.push(item);
+      } else if (
+        text.includes("india") ||
+        text.includes("bjp") ||
+        text.includes("modi")
+      ) {
+        india.push(item);
+      } else {
+        global.push(item);
+      }
+    });
+
+    let message = `📊 *Market Intelligence Brief*\n`;
+    message += formatSection("🌍 GLOBAL", global);
+    message += formatSection("🇮🇳 INDIA", india);
+    message += formatSection("📈 MARKET-RELEVANT", market);
+
+    bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
+
+  } catch (err) {
+    console.log("News error:", err);
+    bot.sendMessage(msg.chat.id, "⚠️ Something went wrong.");
+  }
 });
 
 // -------- SEARCH --------
 bot.onText(/\/search (.+)/, async (msg, match) => {
-  const query = match[1];
+  try {
+    const query = match[1];
+    bot.sendMessage(msg.chat.id, `🔎 Searching: ${query}`);
 
-  bot.sendMessage(msg.chat.id, `🔎 Searching: ${query}`);
+    const items = await fetchByKeyword(query);
 
-  const items = await fetchByKeyword(query);
+    if (!items || items.length === 0) {
+      bot.sendMessage(msg.chat.id, "No results found");
+      return;
+    }
 
-  if (items.length === 0) {
-    bot.sendMessage(msg.chat.id, "No results found");
-    return;
+    let message = `🔎 *Results for:* ${query}\n`;
+    message += formatSection("📰 NEWS", items);
+
+    bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
+
+  } catch (err) {
+    console.log("Search error:", err);
+    bot.sendMessage(msg.chat.id, "⚠️ Search failed");
   }
-
-  let message = `🔎 *Results for:* ${query}\n`;
-
-  message += formatSection("📰 NEWS", items);
-
-  bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
 });
 
 // -------- AUTO --------
@@ -235,7 +250,9 @@ setInterval(async () => {
 const PORT = process.env.PORT || 3000;
 const URL = process.env.RENDER_EXTERNAL_URL;
 
-bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`);
+bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`)
+  .then(() => console.log("Webhook set"))
+  .catch(err => console.log("Webhook error:", err));
 
 http.createServer((req, res) => {
   if (
@@ -244,7 +261,7 @@ http.createServer((req, res) => {
   ) {
     let body = "";
 
-    req.on("data", (chunk) => {
+    req.on("data", chunk => {
       body += chunk;
     });
 
@@ -252,8 +269,9 @@ http.createServer((req, res) => {
       try {
         const update = JSON.parse(body);
         bot.processUpdate(update);
-      } catch {}
-
+      } catch (e) {
+        console.log("Update error:", e);
+      }
       res.end("ok");
     });
   } else {
