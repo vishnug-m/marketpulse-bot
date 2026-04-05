@@ -5,8 +5,8 @@ import http from "http";
 
 dotenv.config();
 
+// -------- BOT --------
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
-
 const parser = new Parser();
 const users = new Set();
 
@@ -17,19 +17,19 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
     `📊 MarketPulse
 
-/news → Normal brief  
-/search <keyword> → Custom news (example: /search oil india)`
+/news → Daily Brief
+/search <keyword> → Custom News`
   );
 });
 
-// -------- TRUSTED --------
+// -------- TRUSTED SOURCES --------
 const TRUSTED = [
   "reuters","bbc","ndtv","economictimes","indiatoday",
   "thehindu","livemint","onmanorama","mathrubhumi",
   "hindustantimes"
 ];
 
-// -------- HELPERS --------
+// -------- CLEAN --------
 const clean = (text) =>
   (text || "")
     .replace(/<[^>]*>/g, "")
@@ -38,11 +38,27 @@ const clean = (text) =>
     .replace(/\|.*$/g, "")
     .trim();
 
+// -------- FILTER --------
 const isTrusted = (item) => {
   const url = item.link || "";
   return TRUSTED.some((s) => url.includes(s));
 };
 
+const isSeriousNews = (text) => {
+  const t = text.toLowerCase();
+
+  if (
+    t.includes("rape") ||
+    t.includes("murder") ||
+    t.includes("suicide") ||
+    t.includes("assault") ||
+    t.includes("crime")
+  ) return false;
+
+  return true;
+};
+
+// -------- DATE --------
 const formatDate = (date) => {
   if (!date) return "";
   return new Date(date).toLocaleDateString("en-IN", {
@@ -51,24 +67,34 @@ const formatDate = (date) => {
   });
 };
 
+// -------- FULL CONTENT --------
 const getContent = (item) => {
-  let text = clean(item.contentSnippet || item.title);
-  return text.substring(0, 200) + "...";
+  let text = clean(item.contentSnippet || item.content || item.title);
+
+  text = text.replace(item.title, "").trim();
+
+  return text.length > 50 ? text : clean(item.title);
 };
 
-// -------- SMART IMPACT --------
-const getImpact = (text) => {
+// -------- MARKET RELEVANCE --------
+const isMarketRelevant = (text) => {
   const t = text.toLowerCase();
 
-  if (t.includes("oil")) return "📉 Oil → Inflation ↑";
-  if (t.includes("rbi")) return "🏦 RBI → Rate impact";
-  if (t.includes("inflation")) return "📊 Inflation risk";
-  if (t.includes("fii") || t.includes("us")) return "💰 Capital flows impact";
-  if (t.includes("budget") || t.includes("tax")) return "🏛 Policy shift";
-
-  return null;
+  return (
+    t.includes("oil") ||
+    t.includes("crude") ||
+    t.includes("inflation") ||
+    t.includes("interest rate") ||
+    t.includes("rbi") ||
+    t.includes("fed") ||
+    t.includes("fii") ||
+    t.includes("gdp") ||
+    t.includes("economy") ||
+    t.includes("stock market")
+  );
 };
 
+// -------- SOURCE --------
 const getSource = (item) => {
   const url = item.link || "";
 
@@ -88,23 +114,16 @@ const formatSection = (title, items) => {
 
   let msg = `\n━━━ ${title} ━━━\n`;
 
-  items.slice(0, 5).forEach((item) => {
-    const text = item.title + " " + (item.contentSnippet || "");
-    const impact = getImpact(text);
-
-    msg += `\n🔹 ${getContent(item)}\n`;
-
-    if (impact) {
-      msg += `   ${impact}\n`;
-    }
-
+  items.slice(0, 4).forEach((item) => {
+    msg += `\n🔹 ${clean(item.title)}\n`;
+    msg += `   ${getContent(item)}\n`;
     msg += `   📰 ${getSource(item)} | 📅 ${formatDate(item.pubDate)}\n`;
   });
 
   return msg;
 };
 
-// -------- FETCH NORMAL --------
+// -------- FETCH --------
 async function fetchNews() {
   try {
     const feed = await parser.parseURL(
@@ -112,13 +131,13 @@ async function fetchNews() {
     );
 
     const filtered = feed.items.filter(isTrusted);
-    return filtered.length ? filtered : feed.items.slice(0, 10);
+    return filtered.length ? filtered : feed.items.slice(0, 12);
   } catch {
     return [];
   }
 }
 
-// -------- FETCH BY KEYWORD --------
+// -------- FETCH KEYWORD --------
 async function fetchByKeyword(query) {
   try {
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
@@ -126,38 +145,57 @@ async function fetchByKeyword(query) {
     )}&hl=en-IN&gl=IN&ceid=IN:en`;
 
     const feed = await parser.parseURL(url);
-
     const filtered = feed.items.filter(isTrusted);
+
     return filtered.length ? filtered : feed.items.slice(0, 10);
   } catch {
     return [];
   }
 }
 
-// -------- NORMAL MODE --------
+// -------- MAIN NEWS --------
 bot.onText(/\/news/, async (msg) => {
   bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
 
   const items = await fetchNews();
+
   if (items.length === 0) {
     bot.sendMessage(msg.chat.id, "⚠️ News unavailable");
     return;
   }
 
-  const geo = items.slice(0, 3);
-  const india = items.slice(3, 6);
-  const market = items.slice(6, 9);
+  let global = [];
+  let india = [];
+  let market = [];
+
+  items.forEach((item) => {
+    const text = (item.title + " " + item.contentSnippet).toLowerCase();
+
+    if (!isSeriousNews(text)) return;
+
+    if (isMarketRelevant(text)) {
+      market.push(item);
+    } else if (
+      text.includes("india") ||
+      text.includes("bjp") ||
+      text.includes("modi")
+    ) {
+      india.push(item);
+    } else {
+      global.push(item);
+    }
+  });
 
   let message = `📊 *Market Intelligence Brief*\n`;
 
-  message += formatSection("🌍 GLOBAL", geo);
+  message += formatSection("🌍 GLOBAL", global);
   message += formatSection("🇮🇳 INDIA", india);
-  message += formatSection("📈 MARKETS", market);
+  message += formatSection("📈 MARKET-RELEVANT", market);
 
   bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
 });
 
-// -------- KEYWORD MODE --------
+// -------- SEARCH --------
 bot.onText(/\/search (.+)/, async (msg, match) => {
   const query = match[1];
 
@@ -180,6 +218,7 @@ bot.onText(/\/search (.+)/, async (msg, match) => {
 // -------- AUTO --------
 setInterval(async () => {
   const now = new Date();
+
   if (now.getHours() === 8 && now.getMinutes() === 0) {
     const items = await fetchNews();
 
@@ -192,15 +231,11 @@ setInterval(async () => {
   }
 }, 60000);
 
-// -------- KEEP ALIVE --------
-
+// -------- WEBHOOK SERVER --------
 const PORT = process.env.PORT || 3000;
 const URL = process.env.RENDER_EXTERNAL_URL;
 
-// Set webhook once
-bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`)
-  .then(() => console.log("Webhook set"))
-  .catch(err => console.log("Webhook error:", err));
+bot.setWebHook(`${URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`);
 
 http.createServer((req, res) => {
   if (
@@ -209,7 +244,7 @@ http.createServer((req, res) => {
   ) {
     let body = "";
 
-    req.on("data", chunk => {
+    req.on("data", (chunk) => {
       body += chunk;
     });
 
@@ -217,9 +252,8 @@ http.createServer((req, res) => {
       try {
         const update = JSON.parse(body);
         bot.processUpdate(update);
-      } catch (e) {
-        console.log("Update error:", e);
-      }
+      } catch {}
+
       res.end("ok");
     });
   } else {
