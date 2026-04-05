@@ -65,18 +65,32 @@ const formatDate = (date) => {
 
 // -------- CONTENT --------
 const getContent = (item) => {
-  let title = clean(item.title || "");
+  const title = clean(item.title || "");
   let content = clean(item.contentSnippet || "");
 
-  // remove title if it appears at the start of content
-  if (content.startsWith(title)) {
-    content = content.slice(title.length).trim();
+  // Remove ALL occurrences of title (not just start)
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(escapedTitle, "gi");
+  content = content.replace(regex, "").trim();
+
+  // Remove repeated phrases (Google News junk)
+  content = content
+    .split(". ")
+    .filter((sentence, index, self) => 
+      sentence && self.indexOf(sentence) === index
+    )
+    .join(". ")
+    .trim();
+
+  // Final cleanup
+  content = content.replace(/\s+/g, " ").trim();
+
+  // If still too similar or empty → fallback
+  if (!content || content.length < 40) {
+    return title;
   }
 
-  // remove duplicate phrases (common in Google News)
-  content = content.replace(title, "").trim();
-
-  return content || title;
+  return content;
 };
 
 // -------- FORMAT --------
