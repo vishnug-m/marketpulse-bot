@@ -65,7 +65,18 @@ const formatDate = (date) => {
 
 // -------- CONTENT --------
 const getContent = (item) => {
-  return clean(item.contentSnippet || item.title);
+  let title = clean(item.title || "");
+  let content = clean(item.contentSnippet || "");
+
+  // remove title if it appears at the start of content
+  if (content.startsWith(title)) {
+    content = content.slice(title.length).trim();
+  }
+
+  // remove duplicate phrases (common in Google News)
+  content = content.replace(title, "").trim();
+
+  return content || title;
 };
 
 // -------- FORMAT --------
