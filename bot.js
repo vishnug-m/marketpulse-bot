@@ -8,20 +8,22 @@ dotenv.config();
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
 const parser = new Parser();
 
-// -------- SAFE TEXT (FIX MARKDOWN ERROR) --------
-const escapeText = (text) => {
-  return (text || "").replace(/[_*[\]()~`>#+=|{}.!-]/g, "");
-};
+// -------- SPLIT LONG MESSAGE --------
+function sendLongMessage(chatId, text) {
+  const maxLength = 4000;
+  for (let i = 0; i < text.length; i += maxLength) {
+    bot.sendMessage(chatId, text.substring(i, i + maxLength));
+  }
+}
 
 // -------- CLEAN --------
 const clean = (text) =>
-  escapeText(
-    (text || "")
-      .replace(/<[^>]*>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-  );
+  (text || "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[_*[\]()~`>#+=|{}.!-]/g, "") // prevent telegram error
+    .trim();
 
 // -------- FILTER --------
 const isSeriousNews = (text) => {
@@ -63,8 +65,7 @@ const formatDate = (date) => {
 
 // -------- CONTENT --------
 const getContent = (item) => {
-  let text = clean(item.contentSnippet || item.title);
-  return text;
+  return clean(item.contentSnippet || item.title);
 };
 
 // -------- FORMAT --------
@@ -73,7 +74,7 @@ const formatSection = (title, items) => {
 
   let msg = `\n━━━ ${title} ━━━\n`;
 
-  items.slice(0, 4).forEach((item) => {
+  items.slice(0, 3).forEach((item) => {
     msg += `\n🔹 ${clean(item.title)}\n`;
     msg += `   ${getContent(item)}\n`;
     msg += `   📰 ${formatDate(item.pubDate)}\n`;
@@ -91,7 +92,7 @@ async function fetchNews() {
 
     console.log("Fetched:", feed.items.length);
 
-    return feed.items.slice(0, 12); // 🔥 NO FILTER (fix)
+    return feed.items.slice(0, 12);
   } catch (err) {
     console.log("Fetch error:", err);
     return [];
@@ -100,40 +101,46 @@ async function fetchNews() {
 
 // -------- NEWS --------
 bot.onText(/\/news/, async (msg) => {
-  bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
+  try {
+    bot.sendMessage(msg.chat.id, "🧠 Preparing brief...");
 
-  const items = await fetchNews();
+    const items = await fetchNews();
 
-  if (!items.length) {
-    bot.sendMessage(msg.chat.id, "⚠️ News unavailable");
-    return;
-  }
-
-  let global = [];
-  let india = [];
-  let market = [];
-
-  items.forEach((item) => {
-    const text = (item.title + " " + item.contentSnippet).toLowerCase();
-
-    if (!isSeriousNews(text)) return;
-
-    if (isMarketRelevant(text)) {
-      market.push(item);
-    } else if (text.includes("india")) {
-      india.push(item);
-    } else {
-      global.push(item);
+    if (!items.length) {
+      bot.sendMessage(msg.chat.id, "⚠️ News unavailable");
+      return;
     }
-  });
 
-  let message = `📊 Market Intelligence Brief\n`;
+    let global = [];
+    let india = [];
+    let market = [];
 
-  message += formatSection("🌍 GLOBAL", global);
-  message += formatSection("🇮🇳 INDIA", india);
-  message += formatSection("📈 MARKET", market);
+    items.forEach((item) => {
+      const text = (item.title + " " + item.contentSnippet).toLowerCase();
 
-  bot.sendMessage(msg.chat.id, message); // 🔥 removed markdown
+      if (!isSeriousNews(text)) return;
+
+      if (isMarketRelevant(text)) {
+        market.push(item);
+      } else if (text.includes("india")) {
+        india.push(item);
+      } else {
+        global.push(item);
+      }
+    });
+
+    let message = `📊 Market Intelligence Brief\n`;
+
+    message += formatSection("🌍 GLOBAL", global);
+    message += formatSection("🇮🇳 INDIA", india);
+    message += formatSection("📈 MARKET", market);
+
+    sendLongMessage(msg.chat.id, message);
+
+  } catch (err) {
+    console.log("Error:", err);
+    bot.sendMessage(msg.chat.id, "⚠️ Something went wrong");
+  }
 });
 
 // -------- WEBHOOK --------
@@ -163,4 +170,6 @@ http.createServer((req, res) => {
   } else {
     res.end("running");
   }
-}).listen(PORT);
+}).listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
