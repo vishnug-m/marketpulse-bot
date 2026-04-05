@@ -65,32 +65,29 @@ const formatDate = (date) => {
 
 // -------- CONTENT --------
 const getContent = (item) => {
-  const title = clean(item.title || "");
   let content = clean(item.contentSnippet || "");
 
-  // Remove ALL occurrences of title (not just start)
-  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(escapedTitle, "gi");
-  content = content.replace(regex, "").trim();
+  // Split into sentences
+  let sentences = content.split(/\.|\u2026|\…/);
 
-  // Remove repeated phrases (Google News junk)
-  content = content
-    .split(". ")
-    .filter((sentence, index, self) => 
-      sentence && self.indexOf(sentence) === index
-    )
-    .join(". ")
-    .trim();
+  // Remove very short / junk sentences
+  sentences = sentences.filter(s => s.trim().length > 40);
 
-  // Final cleanup
-  content = content.replace(/\s+/g, " ").trim();
+  // Remove sentences that are too similar to title
+  const title = clean(item.title || "").toLowerCase();
 
-  // If still too similar or empty → fallback
-  if (!content || content.length < 40) {
-    return title;
-  }
+  sentences = sentences.filter(s => {
+    const sLower = s.toLowerCase();
+    return !sLower.includes(title.substring(0, 50));
+  });
 
-  return content;
+  // Remove duplicates
+  const unique = [...new Set(sentences.map(s => s.trim()))];
+
+  // Take first 2 meaningful sentences
+  const finalText = unique.slice(0, 2).join(". ");
+
+  return finalText ? finalText + "." : clean(item.title);
 };
 
 // -------- FORMAT --------
